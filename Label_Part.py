@@ -114,7 +114,7 @@ def format_description(desc):
         desc = str(desc)
     return Paragraph(desc, desc_style)
 
-def extract_location_values(row, bus_model_col, station_no_col, rack_col, rack_no_col, level_col, cell_col):
+def extract_location_values(row, bus_model_col, station_no_col, rack_col, rack_no_col, rack_no_1st_col, rack_no_2nd_col, level_col, cell_col):
     """Extract location values from separate Excel columns."""
     location_values = [''] * 7
     
@@ -123,20 +123,29 @@ def extract_location_values(row, bus_model_col, station_no_col, rack_col, rack_n
     location_values[1] = str(row.get(station_no_col, '')) if station_no_col and station_no_col in row else ''
     location_values[2] = str(row.get(rack_col, '')) if rack_col and rack_col in row else ''
     
-    # Handle RACK NO - split into 1st and 2nd digit
-    if rack_no_col and rack_no_col in row:
+    # Handle RACK NO digits - check for separate columns first
+    if rack_no_1st_col and rack_no_1st_col in row:
+        location_values[3] = str(row.get(rack_no_1st_col, ''))
+    elif rack_no_col and rack_no_col in row:
+        # Fallback to splitting single RACK NO column if separate columns don't exist
         rack_no_value = str(row.get(rack_no_col, ''))
-        if rack_no_value and len(rack_no_value) >= 2:
+        if rack_no_value and len(rack_no_value) >= 1:
             location_values[3] = rack_no_value[0]  # 1st digit
-            location_values[4] = rack_no_value[1]  # 2nd digit
-        elif rack_no_value and len(rack_no_value) == 1:
-            location_values[3] = rack_no_value[0]  # 1st digit
-            location_values[4] = ''  # 2nd digit empty
         else:
             location_values[3] = ''
-            location_values[4] = ''
     else:
         location_values[3] = ''
+    
+    if rack_no_2nd_col and rack_no_2nd_col in row:
+        location_values[4] = str(row.get(rack_no_2nd_col, ''))
+    elif rack_no_col and rack_no_col in row:
+        # Fallback to splitting single RACK NO column if separate columns don't exist
+        rack_no_value = str(row.get(rack_no_col, ''))
+        if rack_no_value and len(rack_no_value) >= 2:
+            location_values[4] = rack_no_value[1]  # 2nd digit
+        else:
+            location_values[4] = ''
+    else:
         location_values[4] = ''
     
     location_values[5] = str(row.get(level_col, '')) if level_col and level_col in row else ''
@@ -157,21 +166,43 @@ def find_location_columns(df):
     
     rack_col = next((col for col in cols if 'RACK' in col and 'NO' not in col), None)
     
-    rack_no_col = next((col for col in cols if 'RACK' in col and ('NO' in col or 'NUM' in col)), None)
+    # Look for separate 1st and 2nd digit columns first
+    rack_no_1st_col = next((col for col in cols if 'RACK' in col and 'NO' in col and ('1ST' in col or '1' in col and 'DIGIT' in col)), None)
+    rack_no_2nd_col = next((col for col in cols if 'RACK' in col and 'NO' in col and ('2ND' in col or '2' in col and 'DIGIT' in col)), None)
+    
+    # Look for general RACK NO column as fallback
+    rack_no_col = next((col for col in cols if 'RACK' in col and ('NO' in col or 'NUM' in col) and '1ST' not in col and '2ND' not in col and '1' not in col and '2' not in col), None)
     
     level_col = next((col for col in cols if 'LEVEL' in col), None)
     
     cell_col = next((col for col in cols if 'CELL' in col), None)
     
-    return bus_model_col, station_no_col, rack_col, rack_no_col, level_col, cell_col
+    return bus_model_col, station_no_col, rack_col, rack_no_col, rack_no_1st_col, rack_no_2nd_col, level_col, cell_col
 
-def create_location_key(row, bus_model_col, station_no_col, rack_col, rack_no_col, level_col, cell_col):
+def create_location_key(row, bus_model_col, station_no_col, rack_col, rack_no_col, rack_no_1st_col, rack_no_2nd_col, level_col, cell_col):
     """Create a unique key for grouping by location."""
     values = []
     values.append(str(row.get(bus_model_col, '')) if bus_model_col else '')
     values.append(str(row.get(station_no_col, '')) if station_no_col else '')
     values.append(str(row.get(rack_col, '')) if rack_col else '')
-    values.append(str(row.get(rack_no_col, '')) if rack_no_col else '')
+    
+    # Handle rack no values
+    if rack_no_1st_col:
+        values.append(str(row.get(rack_no_1st_col, '')) if rack_no_1st_col else '')
+    elif rack_no_col:
+        rack_no_value = str(row.get(rack_no_col, ''))
+        values.append(rack_no_value[0] if rack_no_value else '')
+    else:
+        values.append('')
+        
+    if rack_no_2nd_col:
+        values.append(str(row.get(rack_no_2nd_col, '')) if rack_no_2nd_col else '')
+    elif rack_no_col:
+        rack_no_value = str(row.get(rack_no_col, ''))
+        values.append(rack_no_value[1] if len(rack_no_value) > 1 else '')
+    else:
+        values.append('')
+    
     values.append(str(row.get(level_col, '')) if level_col else '')
     values.append(str(row.get(cell_col, '')) if cell_col else '')
     
@@ -198,7 +229,7 @@ def generate_labels_from_excel_v1(df, progress_bar=None, status_text=None):
     desc_col = next((col for col in cols if 'DESC' in col), None)
 
     # Find location columns
-    bus_model_col, station_no_col, rack_col, rack_no_col, level_col, cell_col = find_location_columns(df)
+    bus_model_col, station_no_col, rack_col, rack_no_col, rack_no_1st_col, rack_no_2nd_col, level_col, cell_col = find_location_columns(df)
 
     if not part_no_col:
         part_no_col = cols[0]
@@ -207,10 +238,10 @@ def generate_labels_from_excel_v1(df, progress_bar=None, status_text=None):
 
     if status_text:
         status_text.text(f"Using columns: Part No: {part_no_col}, Description: {desc_col}")
-        status_text.text(f"Location columns: Bus Model: {bus_model_col}, Station: {station_no_col}, Rack: {rack_col}, Rack No: {rack_no_col}, Level: {level_col}, Cell: {cell_col}")
+        status_text.text(f"Location columns: Bus Model: {bus_model_col}, Station: {station_no_col}, Rack: {rack_col}, Rack No: {rack_no_col}, Rack No 1st: {rack_no_1st_col}, Rack No 2nd: {rack_no_2nd_col}, Level: {level_col}, Cell: {cell_col}")
 
     # Create location key for grouping
-    df['location_key'] = df.apply(lambda row: create_location_key(row, bus_model_col, station_no_col, rack_col, rack_no_col, level_col, cell_col), axis=1)
+    df['location_key'] = df.apply(lambda row: create_location_key(row, bus_model_col, station_no_col, rack_col, rack_no_col, rack_no_1st_col, rack_no_2nd_col, level_col, cell_col), axis=1)
     
     # Group parts by location
     df_grouped = df.groupby('location_key')
@@ -254,7 +285,7 @@ def generate_labels_from_excel_v1(df, progress_bar=None, status_text=None):
             desc_2 = str(part2[desc_col])
             
             # Extract location values from separate columns
-            location_values = extract_location_values(part1, bus_model_col, station_no_col, rack_col, rack_no_col, level_col, cell_col)
+            location_values = extract_location_values(part1, bus_model_col, station_no_col, rack_col, rack_no_col, rack_no_1st_col, rack_no_2nd_col, level_col, cell_col)
 
             # Create tables for both parts with dynamic description formatting
             part_table = Table(
@@ -390,7 +421,7 @@ def generate_labels_from_excel_v2(df, progress_bar=None, status_text=None):
     desc_col = next((col for col in cols if 'DESC' in col), None)
 
     # Find location columns
-    bus_model_col, station_no_col, rack_col, rack_no_col, level_col, cell_col = find_location_columns(df)
+    bus_model_col, station_no_col, rack_col, rack_no_col, rack_no_1st_col, rack_no_2nd_col, level_col, cell_col = find_location_columns(df)
 
     if not part_no_col:
         part_no_col = cols[0]
@@ -399,10 +430,10 @@ def generate_labels_from_excel_v2(df, progress_bar=None, status_text=None):
 
     if status_text:
         status_text.text(f"Using columns: Part No: {part_no_col}, Description: {desc_col}")
-        status_text.text(f"Location columns: Bus Model: {bus_model_col}, Station: {station_no_col}, Rack: {rack_col}, Rack No: {rack_no_col}, Level: {level_col}, Cell: {cell_col}")
+        status_text.text(f"Location columns: Bus Model: {bus_model_col}, Station: {station_no_col}, Rack: {rack_col}, Rack No: {rack_no_col}, Rack No 1st: {rack_no_1st_col}, Rack No 2nd: {rack_no_2nd_col}, Level: {level_col}, Cell: {cell_col}")
 
     # Create location key for grouping
-    df['location_key'] = df.apply(lambda row: create_location_key(row, bus_model_col, station_no_col, rack_col, rack_no_col, level_col, cell_col), axis=1)
+    df['location_key'] = df.apply(lambda row: create_location_key(row, bus_model_col, station_no_col, rack_col, rack_no_col, rack_no_1st_col, rack_no_2nd_col, level_col, cell_col), axis=1)
     
     # Group parts by location
     df_grouped = df.groupby('location_key')
@@ -442,7 +473,7 @@ def generate_labels_from_excel_v2(df, progress_bar=None, status_text=None):
             desc = str(part1[desc_col])
             
             # Extract location values from separate columns
-            location_values = extract_location_values(part1, bus_model_col, station_no_col, rack_col, rack_no_col, level_col, cell_col)
+            location_values = extract_location_values(part1, bus_model_col, station_no_col, rack_col, rack_no_col, rack_no_1st_col, rack_no_2nd_col, level_col, cell_col)
 
             # Part table with enhanced formatting
             part_table = Table(
@@ -586,70 +617,72 @@ def main():
                         filename = "singlepart_labels.pdf"
                     else:
                         pdf_buffer = generate_labels_from_excel_v1(df, progress_bar, status_text)
-                        filename = "multiplepart_labels.pdf"
-
+                        filename = "multipart_labels.pdf"
+                    
                     if pdf_buffer:
                         status_text.text("✅ PDF generated successfully!")
                         
                         # Provide download button
                         st.download_button(
-                            label="📥 Download PDF",
+                            label="📥 Download PDF Labels",
                             data=pdf_buffer.getvalue(),
                             file_name=filename,
                             mime="application/pdf",
                             type="primary"
                         )
                         
-                        st.success("🎉 Your PDF is ready for download!")
+                        st.success(f"🎉 Labels generated successfully! Click the download button above to get your {filename}")
                         
+                        # Display some statistics
+                        with st.expander("📈 Generation Statistics", expanded=True):
+                            total_rows = len(df)
+                            unique_locations = df.groupby(df.apply(lambda row: create_location_key(row, *find_location_columns(df)), axis=1)).ngroups if len(df) > 0 else 0
+                            st.metric("Total Parts", total_rows)
+                            st.metric("Unique Locations", unique_locations)
+                            st.metric("Labels Generated", unique_locations)
                     else:
-                        st.error("❌ Failed to generate PDF. Please check your file format and data.")
+                        st.error("❌ Failed to generate PDF. Please check your file format and try again.")
                         
                 except Exception as e:
-                    st.error(f"❌ An error occurred: {str(e)}")
-                    st.info("Please ensure your file has the expected columns")
+                    st.error(f"❌ Error generating PDF: {str(e)}")
+                    st.error("Please check your file format and ensure it contains the required columns.")
+                
+                finally:
+                    # Clear progress indicators
+                    progress_bar.empty()
+                    status_text.empty()
 
         except Exception as e:
             st.error(f"❌ Error reading file: {str(e)}")
-            st.info("Please ensure you've uploaded a valid Excel or CSV file.")
+            st.error("Please ensure the file is a valid Excel or CSV file.")
 
     else:
         # Show instructions when no file is uploaded
-        st.info("👆 Please upload an Excel or CSV file to get started")
+        st.info("👆 Please upload an Excel or CSV file to get started.")
         
-        with st.expander("📋 File Format Requirements", expanded=True):
+        with st.expander("📋 Instructions", expanded=True):
             st.markdown("""
-            **Your file should contain the following columns:**
+            ### How to use this tool:
             
-            **Main Columns:**
-            - **Part Number** (column names like: 'Part No', 'Part Number', 'PartNo', etc.)
-            - **Description** (column names like: 'Description', 'Desc', etc.)
+            1. **Upload your file**: Choose an Excel (.xlsx, .xls) or CSV file containing part information
+            2. **Select label type**: 
+               - **Single Part**: One part per label (Version 2 format)
+               - **Multiple Parts**: Two parts per label (Version 1 format)
+            3. **Generate PDF**: Click the generate button to create your labels
+            4. **Download**: Use the download button to get your PDF file
             
-            **Location Columns:**
-            - **Bus Model** (column names like: 'Bus Model', 'Bus', etc.)
-            - **Station No** (column names like: 'Station No', 'Station Number', 'Station', etc.)
-            - **Rack** (column names like: 'Rack', etc.)
-            - **Rack No** (column names like: 'Rack No', 'Rack Number', etc.) - This will be split into 1st and 2nd digit
-            - **Level** (column names like: 'Level', etc.)
-            - **Cell** (column names like: 'Cell', etc.)
+            ### Expected columns in your file:
+            - **Part Number**: Column containing part numbers (e.g., "PART NO", "PARTNO", "PART")
+            - **Description**: Column containing part descriptions (e.g., "DESC", "DESCRIPTION")
+            - **Location columns** (optional but recommended):
+              - Bus Model, Station No, Rack, Rack No (or separate 1st/2nd digit columns), Level, Cell
             
-            **Supported file formats:**
-            - Excel files (.xlsx, .xls)
-            - CSV files (.csv)
-            
-            **Rack Types:**
-            - **Single Part**: One part assigned to a single location  
-            - **Multiple Parts**: Multiple parts assigned to a single location
-            
-            **Location Box Structure:**
-            The location section will have 7 boxes:
-            1. Bus Model
-            2. Station No
-            3. Rack
-            4. Rack No (1st digit)
-            5. Rack No (2nd digit)
-            6. Level
-            7. Cell
+            ### Features:
+            - ✅ Automatic column detection
+            - ✅ Dynamic font sizing based on content length
+            - ✅ Color-coded location tables
+            - ✅ Professional PDF formatting
+            - ✅ Progress tracking during generation
             """)
 
 if __name__ == "__main__":
